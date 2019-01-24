@@ -511,35 +511,39 @@ namespace Microsoft.AspNet.SignalR.Client
                                 {
                                     VerifyProtocolVersion(negotiationResponse.ProtocolVersion);
 
-                                    if (negotiationResponse.ProtocolVersion.Equals("2.0") && !string.IsNullOrEmpty(negotiationResponse.RedirectUrl))
+                                    if (negotiationResponse.ProtocolVersion.Equals("2.0"))
                                     {
-                                        // Ensure the URL ends with a trailing slash.
-                                        if (!negotiationResponse.RedirectUrl.EndsWith("/"))
+                                        if (!string.IsNullOrEmpty(negotiationResponse.Error))
                                         {
-                                            negotiationResponse.RedirectUrl += "/";
+                                            throw new StartException(string.Format(Resources.Error_ErrorFromServer, negotiationResponse.Error));
                                         }
-
-                                        // Update the URL based on the redirect response and restart the negotiation
-                                        Url = negotiationResponse.RedirectUrl;
-
-                                        if (!string.IsNullOrEmpty(negotiationResponse.AccessToken))
+                                        if (!string.IsNullOrEmpty(negotiationResponse.RedirectUrl))
                                         {
-                                            // This will stomp on the current Authorization header, but that's by design.
-                                            // If the server specified a token, that is expected to overrule the token the client is currently using.
-                                            Headers["Authorization"] = $"Bearer {negotiationResponse.AccessToken}";
-                                        }
+                                            if (!negotiationResponse.RedirectUrl.EndsWith("/"))
+                                            {
+                                                negotiationResponse.RedirectUrl += "/";
+                                            }
 
-                                        negotiationAttempts += 1;
-                                        if (negotiationAttempts >= MaxRedirects)
-                                        {
-                                            throw new InvalidOperationException(Resources.Error_NegotiationLimitExceeded);
+                                            // Update the URL based on the redirect response and restart the negotiation
+                                            Url = negotiationResponse.RedirectUrl;
+
+                                            if (!string.IsNullOrEmpty(negotiationResponse.AccessToken))
+                                            {
+                                                // This will stomp on the current Authorization header, but that's by design.
+                                                // If the server specified a token, that is expected to overrule the token the client is currently using.
+                                                Headers["Authorization"] = $"Bearer {negotiationResponse.AccessToken}";
+                                            }
+
+                                            negotiationAttempts += 1;
+                                            if (negotiationAttempts >= MaxRedirects)
+                                            {
+                                                throw new InvalidOperationException(Resources.Error_NegotiationLimitExceeded);
+                                            }
+                                            return StartNegotiation();
                                         }
-                                        return StartNegotiation();
                                     }
-                                    else
-                                    {
-                                        return CompleteNegotiation(negotiationResponse);
-                                    }
+
+                                    return CompleteNegotiation(negotiationResponse);
                                 })
                                 .ContinueWithNotComplete(() => Disconnect());
             }
@@ -554,17 +558,23 @@ namespace Microsoft.AspNet.SignalR.Client
             return _transport.Start(this, _connectionData, _disconnectCts.Token)
                              .RunSynchronously(() =>
                              {
-                                 // NOTE: We have tests that rely on this state change occuring *BEFORE* the start task is complete
-                                 ChangeState(ConnectionState.Connecting, ConnectionState.Connected);
+                                 lock (_stateLock)
+                                 {
+                                     // NOTE: We have tests that rely on this state change occuring *BEFORE* the start task is complete
+                                     if (!ChangeState(ConnectionState.Connecting, ConnectionState.Connected))
+                                     {
+                                         throw new StartException(Resources.Error_ConnectionCancelled, LastError);
+                                     }
 
-                                 // Now that we're connected complete the start task that the
-                                 // receive queue is waiting on
-                                 _startTcs.SetResult(null);
+                                     // Now that we're connected complete the start task that the
+                                     // receive queue is waiting on
+                                     _startTcs.TrySetResult(null);
 
-                                 // Start the monitor to check for server activity
-                                 _lastMessageAt = DateTime.UtcNow;
-                                 _lastActiveAt = DateTime.UtcNow;
-                                 Monitor.Start();
+                                     // Start the monitor to check for server activity
+                                     _lastMessageAt = DateTime.UtcNow;
+                                     _lastActiveAt = DateTime.UtcNow;
+                                     Monitor.Start();
+                                 }
                              })
                              // Don't return until the last receive has been processed to ensure messages/state sent in OnConnected
                              // are processed prior to the Start() method task finishing

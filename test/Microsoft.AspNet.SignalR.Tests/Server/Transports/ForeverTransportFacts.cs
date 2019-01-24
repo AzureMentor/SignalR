@@ -1,4 +1,4 @@
-﻿// Copyright (c) .NET Foundation. All rights reserved.
+// Copyright (c) .NET Foundation. All rights reserved.
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
@@ -64,11 +64,12 @@ namespace Microsoft.AspNet.SignalR.Tests.Server.Transports
             var qs = new NameValueCollection();
             request.Setup(m => m.QueryString).Returns(new NameValueCollectionWrapper(qs));
             request.Setup(m => m.LocalPath).Returns("/test/echo/abort");
+            var response = new Mock<IResponse>();
             string abortedConnectionId = null;
             var counters = new Mock<IPerformanceCounterManager>();
             var heartBeat = new Mock<ITransportHeartbeat>();
             var json = JsonUtility.CreateDefaultSerializer();
-            var hostContext = new HostContext(request.Object, null);
+            var hostContext = new HostContext(request.Object, response.Object);
             var transportConnection = new Mock<ITransportConnection>();
             var traceManager = new Mock<ITraceManager>();
             counters.SetupGet(m => m.ConnectionsConnected).Returns(new NoOpPerformanceCounter());
@@ -92,6 +93,29 @@ namespace Microsoft.AspNet.SignalR.Tests.Server.Transports
             transport.Object.ProcessRequest(transportConnection.Object).Wait();
 
             Assert.Equal("c-1", abortedConnectionId);
+        }
+
+        [Fact]
+        public void AbortUrlTriggersContentTypeSet()
+        {
+            var request = new Mock<IRequest>();
+            var qs = new NameValueCollection();
+            request.Setup(m => m.QueryString).Returns(new NameValueCollectionWrapper(qs));
+            request.Setup(m => m.LocalPath).Returns("/test/echo/abort");
+
+            var response = new Mock<IResponse>();
+            var counters = new Mock<IPerformanceCounterManager>();
+            var heartBeat = new Mock<ITransportHeartbeat>();
+            var hostContext = new HostContext(request.Object, response.Object);
+            var transportConnection = new Mock<ITransportConnection>();
+            var traceManager = new Mock<ITraceManager>();
+            var transport = new Mock<ForeverTransport>(hostContext, null, heartBeat.Object, counters.Object, traceManager.Object, null)
+            {
+                CallBase = true
+            };
+
+            transport.Object.ProcessRequest(transportConnection.Object).Wait();
+            response.VerifySet(r => r.ContentType = It.IsAny<string>(), "ContentType not set");
         }
 
         [Fact]
@@ -202,7 +226,7 @@ namespace Microsoft.AspNet.SignalR.Tests.Server.Transports
             Func<Task> cancelled = () =>
             {
                 var tcs = new TaskCompletionSource<object>();
-                tcs.SetCanceled();
+                tcs.TrySetCanceled();
                 return tcs.Task;
             };
 
@@ -252,7 +276,7 @@ namespace Microsoft.AspNet.SignalR.Tests.Server.Transports
                                                          callback = cb;
                                                          state = st;
 
-                                                         bool result = await cb(new PersistentResponse() { Aborted = true } , st);
+                                                         bool result = await cb(new PersistentResponse() { Aborted = true }, st);
 
                                                          if (!result)
                                                          {
@@ -341,7 +365,7 @@ namespace Microsoft.AspNet.SignalR.Tests.Server.Transports
             Func<Task> writeCancelled = () =>
             {
                 var tcs = new TaskCompletionSource<object>();
-                tcs.SetCanceled();
+                tcs.TrySetCanceled();
                 return tcs.Task;
             };
 
@@ -384,7 +408,7 @@ namespace Microsoft.AspNet.SignalR.Tests.Server.Transports
                                                      It.IsAny<int>(),
                                                      It.IsAny<object>()))
                 .Returns<string, Func<PersistentResponse, object, Task<bool>>, int, object>(
-                    (messageId, callback, maxMessages, state) => 
+                    (messageId, callback, maxMessages, state) =>
                     {
                         callback(new PersistentResponse(), state);
                         return DisposableAction.Empty;

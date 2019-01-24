@@ -75,7 +75,7 @@ namespace Microsoft.AspNet.SignalR.Client.Http
 
             prepareRequest(request);
 
-            HttpClient httpClient = GetHttpClient(isLongRunning);
+            var httpClient = GetHttpClient(isLongRunning);
 
             return httpClient.SendAsync(requestMessage, HttpCompletionOption.ResponseHeadersRead, cts.Token)
                  .Then(responseMessage =>
@@ -86,6 +86,12 @@ namespace Microsoft.AspNet.SignalR.Client.Http
                      }
                      else
                      {
+                         // Dispose the response (https://github.com/SignalR/SignalR/issues/4092)
+                         responseMessage.RequestMessage.Dispose();
+                         responseMessage.Dispose();
+
+                         // None of the getters on HttpResponseMessage throw ODE, so it should be safe to give the catcher of the exception
+                         // access to the response. They may get an ODE if they try to read the body, but that's OK.
                          throw new HttpClientException(responseMessage);
                      }
 
@@ -131,9 +137,9 @@ namespace Microsoft.AspNet.SignalR.Client.Http
 
             prepareRequest(request);
 
-            HttpClient httpClient = GetHttpClient(isLongRunning);
+            var httpClient = GetHttpClient(isLongRunning);
 
-            return httpClient.SendAsync(requestMessage, HttpCompletionOption.ResponseHeadersRead, cts.Token)                
+            return httpClient.SendAsync(requestMessage, HttpCompletionOption.ResponseHeadersRead, cts.Token)
                 .Then(responseMessage =>
                 {
                     if (responseMessage.IsSuccessStatusCode)
@@ -142,7 +148,11 @@ namespace Microsoft.AspNet.SignalR.Client.Http
                     }
                     else
                     {
-                        throw new HttpClientException(responseMessage);
+                        // Dispose the response (https://github.com/SignalR/SignalR/issues/4092)
+                        var message = responseMessage.ToString();
+                        responseMessage.RequestMessage.Dispose();
+                        responseMessage.Dispose();
+                        throw new HttpClientException(message);
                     }
 
                     return (IResponse)new HttpResponseMessageWrapper(responseMessage);
@@ -154,7 +164,7 @@ namespace Microsoft.AspNet.SignalR.Client.Http
         /// </summary>
         /// <param name="isLongRunning">Indicates whether the request is long running</param>
         /// <returns></returns>
-        private HttpClient GetHttpClient(bool isLongRunning)
+        private protected virtual HttpClient GetHttpClient(bool isLongRunning)
         {
             return isLongRunning ? _longRunningClient : _shortRunningClient;
         }
